@@ -13,14 +13,14 @@ from typing import Annotated, Any, Literal
 import groq
 import httpx
 from groq import AsyncStream
+from groq.types.chat import ChatCompletion, ChatCompletionChunk
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from groq.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from app.completion_webhook import (
