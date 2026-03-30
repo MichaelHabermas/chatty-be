@@ -1,11 +1,16 @@
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import groq
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from groq.types.chat import ChatCompletion
 from pydantic import BaseModel, Field
 
@@ -32,6 +37,63 @@ def _require_api_key() -> str:
     if not key:
         raise RuntimeError("GROQ_API_KEY is not set")
     return key
+
+
+http_bearer = HTTPBearer(auto_error=False)
+
+_CHATTY_UNAUTHORIZED = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Invalid or missing bearer token",
+    headers={"WWW-Authenticate": 'Bearer realm="chatty"'},
+)
+
+
+def _verify_chatty_bearer_authorization_header(authorization: str | None) -> None:
+    """When ``CHATTY_API_KEY`` is set, require a matching ``Authorization: Bearer`` value."""
+    expected = os.environ.get("CHATTY_API_KEY", "").strip()
+    if not expected:
+        return
+    if not authorization or not authorization.startswith("Bearer "):
+        raise _CHATTY_UNAUTHORIZED
+    token = authorization.removeprefix("Bearer ").strip()
+    if len(token) != len(expected):
+        raise _CHATTY_UNAUTHORIZED
+    if not secrets.compare_digest(token, expected):
+        raise _CHATTY_UNAUTHORIZED
+
+
+async def require_chatty_bearer(
+    cred: Annotated[HTTPAuthorizationCredentials | None, Depends(http_bearer)],
+) -> None:
+    """When ``CHATTY_API_KEY`` is set, require ``Authorization: Bearer <token>`` (OpenAI SDK compatible)."""
+    if cred is None:
+        _verify_chatty_bearer_authorization_header(None)
+        return
+    _verify_chatty_bearer_authorization_header(f"Bearer {cred.credentials}")
+
+
+def _docs_paths_require_chatty_auth(path: str) -> bool:
+    if path in ("/openapi.json", "/redoc"):
+        return True
+    return path.startswith("/docs")
+
+
+class ChattyDocsAuthMiddleware(BaseHTTPMiddleware):
+    """When ``CHATTY_API_KEY`` is set, protect OpenAPI + Swagger/ReDoc the same as API routes."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not _docs_paths_require_chatty_auth(request.url.path):
+            return await call_next(request)
+        try:
+            _verify_chatty_bearer_authorization_header(request.headers.get("Authorization"))
+        except HTTPException as e:
+            hdrs = dict(e.headers) if e.headers else {}
+            return JSONResponse(
+                status_code=e.status_code,
+                content={"detail": e.detail},
+                headers=hdrs,
+            )
+        return await call_next(request)
 
 
 def _groq_error_to_http(exc: Exception) -> HTTPException:
@@ -88,6 +150,7 @@ async def lifespan(fastapi_app: FastAPI):
 
 
 app = FastAPI(title="Chatty", lifespan=lifespan)
+app.add_middleware(ChattyDocsAuthMiddleware)
 
 
 class ChatRequest(BaseModel):
@@ -105,7 +168,7 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_chatty_bearer)])
 async def chat(body: ChatRequest):
     client: groq.AsyncGroq = app.state.groq
     if body.stream:
@@ -147,7 +210,7 @@ async def chat(body: ChatRequest):
     )
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", dependencies=[Depends(require_chatty_bearer)])
 async def openai_chat_completions(body: OpenAIChatCompletionRequest):
     client: groq.AsyncGroq = app.state.groq
     kwargs = chat_completion_kwargs(body)
@@ -173,7 +236,7 @@ async def openai_chat_completions(body: OpenAIChatCompletionRequest):
     )
 
 
-@app.get("/v1/models")
+@app.get("/v1/models", dependencies=[Depends(require_chatty_bearer)])
 async def openai_models():
     client: groq.AsyncGroq = app.state.groq
     try:

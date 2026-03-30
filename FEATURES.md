@@ -54,3 +54,23 @@ Keeps traffic serving on a cheaper or higher-quota model when the primary is thr
 ### Docs
 
 Set **`GROQ_FALLBACK_MODEL`** to a model id that differs from **`GROQ_MODEL`** / per-request `model`. Example: primary `llama-3.3-70b-versatile`, fallback `llama-3.1-8b-instant`. See `.env.example`.
+
+---
+
+## Optional bearer auth (Chatty-facing)
+
+### Added
+
+- **`CHATTY_API_KEY`** (optional env) — when set to a non-empty value, **`POST /chat`**, **`POST /v1/chat/completions`**, **`GET /v1/models`**, **`/openapi.json`**, **`/redoc`**, and **`/docs`** (including paths under **`/docs/`**, e.g. OAuth redirect) require the same **`Authorization: Bearer`** token (timing-safe comparison). **`GET /health`** stays unauthenticated for probes.
+
+### Browser note
+
+Swagger UI at **`/docs`** needs the Bearer on every request (including the first HTML load). Use a client that sends the header (e.g. `curl`, reverse proxy, or an extension), or open **`/docs`** after configuring your environment to attach **`Authorization`**.
+
+### Why
+
+Lets you expose Chatty on a network without leaving Groq-backed routes open while **`GROQ_API_KEY`** remains server-side. Matches how the OpenAI Python client sends `api_key` (Bearer), so `OpenAI(base_url=..., api_key=os.environ["CHATTY_API_KEY"])` works against Chatty.
+
+### Docs
+
+If **`CHATTY_API_KEY`** is unset or blank, behavior is unchanged (no Chatty-side auth). Generate a long random secret for production when enabled.
