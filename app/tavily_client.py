@@ -13,6 +13,14 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _MAX_SNIPPET_CHARS = 800
 
 
+def _result_row_fields(r: dict[str, Any]) -> tuple[str, str, str]:
+    """Title, url, and snippet with the same truncation as ``web_sources`` responses."""
+    title = str(r.get("title") or "")[:200]
+    url = str(r.get("url") or "")[:500]
+    snippet = str(r.get("content") or "")[:_MAX_SNIPPET_CHARS]
+    return title, url, snippet
+
+
 def tavily_max_results() -> int:
     """Return Tavily max_results from env, clamped to 1–20 (default 5)."""
     raw = os.environ.get("TAVILY_MAX_RESULTS", "").strip()
@@ -56,9 +64,7 @@ def tavily_results_to_web_sources(results: list[dict[str, Any]]) -> list[dict[st
     for r in results:
         if not isinstance(r, dict):
             continue
-        title = str(r.get("title") or "")[:200]
-        url = str(r.get("url") or "")[:500]
-        snippet = str(r.get("content") or "")[:_MAX_SNIPPET_CHARS]
+        title, url, snippet = _result_row_fields(r)
         out.append({"title": title, "url": url, "content": snippet})
     return out
 
@@ -70,9 +76,7 @@ def _format_web_context(results: list[dict[str, Any]]) -> str:
         "",
     ]
     for i, r in enumerate(results, 1):
-        title = str(r.get("title") or "")[:200]
-        url = str(r.get("url") or "")[:500]
-        snippet = str(r.get("content") or "")[:_MAX_SNIPPET_CHARS]
+        title, url, snippet = _result_row_fields(r)
         lines.append(f"{i}. {title}\n   URL: {url}\n   {snippet}\n")
     return "\n".join(lines)
 

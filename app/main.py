@@ -1,23 +1,25 @@
+"""FastAPI application entrypoint for Chatty.
+
+Groq-backed chat, OpenAI-compatible routes, optional Tavily web search.
+"""
+
 import os
 import secrets
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Literal
 
 import groq
 import httpx
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from groq.types.chat import ChatCompletion
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from app.groq_chat import (
     OpenAIChatCompletionRequest,
@@ -28,8 +30,11 @@ from app.groq_chat import (
     sse_stream_with_observability,
     with_fallback_header,
 )
+from app.request_policy import apply_request_policy, load_request_policy
 from app.tavily_client import augment_messages_with_web
 from app.web_routing import resolve_use_web_search
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 GROQ_HTTP_EXCEPTIONS = (
     groq.AuthenticationError,
@@ -38,6 +43,7 @@ GROQ_HTTP_EXCEPTIONS = (
     groq.APIConnectionError,
     groq.APIStatusError,
 )
+
 
 def _require_api_key() -> str:
     key = os.environ.get("GROQ_API_KEY")
@@ -72,7 +78,7 @@ def _verify_chatty_bearer_authorization_header(authorization: str | None) -> Non
 async def require_chatty_bearer(
     cred: Annotated[HTTPAuthorizationCredentials | None, Depends(http_bearer)],
 ) -> None:
-    """When ``CHATTY_API_KEY`` is set, require ``Authorization: Bearer <token>`` (OpenAI SDK compatible)."""
+    """Require ``Authorization: Bearer`` when ``CHATTY_API_KEY`` is set (OpenAI SDK compatible)."""
     if cred is None:
         _verify_chatty_bearer_authorization_header(None)
         return
@@ -85,7 +91,7 @@ def _docs_paths_require_chatty_auth(path: str) -> bool:
     return path.startswith("/docs")
 
 
-class ChattyDocsAuthMiddleware(BaseHTTPMiddleware):
+class ChattyDocsAuthMiddleware(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods
     """When ``CHATTY_API_KEY`` is set, protect OpenAPI + Swagger/ReDoc the same as API routes."""
 
     async def dispatch(self, request: Request, call_next):
@@ -105,7 +111,7 @@ class ChattyDocsAuthMiddleware(BaseHTTPMiddleware):
 
 def _groq_error_to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, groq.APIStatusError):
-        status = getattr(exc, "status_code", None) or 502
+        http_status = getattr(exc, "status_code", None) or 502
         detail = str(exc)
         resp = getattr(exc, "response", None)
         if resp is not None:
@@ -113,7 +119,7 @@ def _groq_error_to_http(exc: Exception) -> HTTPException:
                 detail = resp.text or detail
             except httpx.HTTPError:
                 pass
-        code = status if 400 <= status < 600 else 502
+        code = http_status if 400 <= http_status < 600 else 502
         return HTTPException(status_code=code, detail=detail)
     if isinstance(exc, groq.APIConnectionError):
         return HTTPException(status_code=502, detail="Groq API unreachable")
@@ -151,8 +157,10 @@ def _streaming_sse_response(obs: dict[str, str], sse_body):
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
+    """Create and tear down shared Groq client, HTTP client, and request policy."""
     fastapi_app.state.groq = groq.AsyncGroq(api_key=_require_api_key())
     fastapi_app.state.http = httpx.AsyncClient(timeout=60.0)
+    fastapi_app.state.request_policy = load_request_policy()
     yield
     await fastapi_app.state.http.aclose()
     await fastapi_app.state.groq.close()
@@ -163,6 +171,8 @@ app.add_middleware(ChattyDocsAuthMiddleware)
 
 
 class ChatRequest(BaseModel):
+    """Body for ``POST /chat``."""
+
     prompt: str = Field(..., min_length=1)
     stream: bool = False
     web_search: bool = False
@@ -170,6 +180,8 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """Non-streaming JSON response for ``POST /chat``."""
+
     prompt: str
     response: str
     web_sources: list[dict[str, str]] | None = None
@@ -177,14 +189,16 @@ class ChatResponse(BaseModel):
 
 @app.get("/health")
 async def health():
+    """Liveness probe."""
     return {"status": "ok"}
 
 
 @app.post("/chat", dependencies=[Depends(require_chatty_bearer)])
-async def chat(
+async def chat(  # pylint: disable=too-many-locals
     body: ChatRequest,
     x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
 ):
+    """Simple chat endpoint: optional web search, then Groq (stream or JSON)."""
     client: groq.AsyncGroq = app.state.groq
     http: httpx.AsyncClient = app.state.http
     base_messages = [{"role": "user", "content": body.prompt}]
@@ -200,6 +214,7 @@ async def chat(
         base_messages,
         web_search=use_web,
     )
+    messages = apply_request_policy(messages, app.state.request_policy)
     if body.stream:
         v1_body = OpenAIChatCompletionRequest(
             messages=messages,
@@ -244,10 +259,11 @@ async def chat(
 
 
 @app.post("/v1/chat/completions", dependencies=[Depends(require_chatty_bearer)])
-async def openai_chat_completions(
+async def openai_chat_completions(  # pylint: disable=too-many-locals
     body: OpenAIChatCompletionRequest,
     x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
 ):
+    """OpenAI-compatible chat completions (subset of fields), with optional web search."""
     client: groq.AsyncGroq = app.state.groq
     http: httpx.AsyncClient = app.state.http
     use_web = await resolve_use_web_search(
@@ -262,6 +278,7 @@ async def openai_chat_completions(
         list(body.messages),
         web_search=use_web,
     )
+    augmented = apply_request_policy(augmented, app.state.request_policy)
     kwargs = chat_completion_kwargs(body.model_copy(update={"messages": augmented}))
     t0 = time.perf_counter()
     try:
@@ -293,6 +310,7 @@ async def openai_chat_completions(
 
 @app.get("/v1/models", dependencies=[Depends(require_chatty_bearer)])
 async def openai_models():
+    """List models from Groq (OpenAI-compatible)."""
     client: groq.AsyncGroq = app.state.groq
     try:
         listed = await client.models.list()

@@ -21,7 +21,7 @@ Server: [http://localhost:8000](http://localhost:8000) — API docs at `/docs`.
 
 ## How it works
 
-FastAPI app in `app/main.py` wrapping the Groq API. Lifespan creates an `AsyncGroq` client and an `httpx.AsyncClient` for Tavily, stores them on `app.state`, and closes them on shutdown. Shared request mapping and SSE streaming live in `app/groq_chat.py`. Tavily helpers live in `app/tavily_client.py`.
+FastAPI app in `app/main.py` wrapping the Groq API. Lifespan creates an `AsyncGroq` client and an `httpx.AsyncClient` for Tavily, stores them on `app.state`, and closes them on shutdown. Shared request mapping and SSE streaming live in `app/groq_chat.py`. Tavily helpers live in `app/tavily_client.py`. Optional declarative **request policy** (deny / redact / prepend system) lives in `app/request_policy.py`, applied after Tavily augmentation and before Groq.
 
 - **`POST /chat`** — Simple prompt → Groq (default model `llama-3.3-70b-versatile`, override with `GROQ_MODEL`). JSON body: `prompt` (required), `stream` (optional, default false), `web_search` (optional, default false), `web_search_mode` (optional: `off` \| `on` \| `auto`; **omitted defaults to `auto`** — server-side heuristics decide Tavily). If `stream` is false, response is `ChatResponse` (`prompt`, `response`). If `stream` is true, the response is **SSE** (`text/event-stream`) in the same shape as OpenAI streaming (`data: {...}` lines, then `data: [DONE]`).
 - **`POST /v1/chat/completions`** — OpenAI-compatible chat completions (subset of fields): `messages` (required), optional `model`, `stream`, `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `user`, `web_search`, `web_search_mode` (**omitted ⇒ `auto`**). Non-streaming returns JSON matching Groq’s `ChatCompletion` shape; streaming returns SSE as above.
@@ -67,6 +67,9 @@ From `.env.example`:
 - `GROQ_WEB_SEARCH_ROUTER_MODEL` (optional) — Groq model id for the JSON router when `web_search_mode` is `auto` and heuristics are ambiguous; unset means heuristic-only auto (no router call)
 - `TAVILY_MAX_RESULTS` (optional) — default 5, capped at 20
 - `TAVILY_SEARCH_DEPTH` (optional) — `basic`, `advanced`, `fast`, or `ultra-fast` (default `basic`)
+- `CHATTY_REQUEST_POLICY` (optional) — path to JSON request policy (prepend, deny regexes, redact rules); invalid policy fails startup
+- `CHATTY_PREPEND_SYSTEM` (optional) — extra system prepend (merged with file when both set)
+- `CHATTY_DENY_MESSAGE_PATTERN` (optional) — one extra deny regex (merged with file list)
 
 ## Dependencies
 

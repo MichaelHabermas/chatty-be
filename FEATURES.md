@@ -22,6 +22,25 @@ If the last user turn has no extractable text, Tavily is skipped. Queries are se
 
 ---
 
+## Request policy (declarative governance)
+
+### Added
+
+- **`CHATTY_REQUEST_POLICY`** — path to a JSON file: optional **`prepend_system`**, **`deny_message_patterns`** (list of regex strings matched against concatenated message text), **`redact_patterns`** (list of `{ "pattern", "replacement" }` applied to string / text parts).
+- **`CHATTY_PREPEND_SYSTEM`** — optional env shortcut for extra prepend (merged after file **`prepend_system`** when both set, joined with `\n\n`).
+- **`CHATTY_DENY_MESSAGE_PATTERN`** — optional single extra deny regex (merged with the file list).
+- Order after Tavily: **deny** (raw text) → **redact** → **prepend system**. Deny → **400** with **`Request blocked by Chatty request policy`**. Bad policy JSON or invalid regex → **startup failure**.
+
+### Why
+
+Governance and hygiene (compliance prefix, PII scrubbing, blocked phrases) without a second model or a separate gateway; policy lives in one auditable artifact.
+
+### Docs
+
+See [`CLAUDE.md`](CLAUDE.md).
+
+---
+
 ## Agent-grade OpenAI compatibility (`/v1/chat/completions`)
 
 ### Added
