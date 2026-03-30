@@ -35,3 +35,22 @@ Gives callers a standard, stateless way to tie a Chatty HTTP response to Groq’
 ### Docs
 
 `Server-Timing` values are in **milliseconds** (`dur`). Browsers only expose `Server-Timing` to frontend JS if the response also includes `Timing-Allow-Origin` (not set here); for server-to-server and `curl -v` / proxies, headers are visible as usual.
+
+---
+
+## Rate-limit fallback model
+
+### Added
+
+- **`GROQ_FALLBACK_MODEL`** (optional env) — if the Groq call fails with **HTTP 429** (`RateLimitError` or `APIStatusError` with status 429), Chatty **retries once** with `model` set to this fallback. No retry if the env is unset, empty, or **equal to the request’s resolved primary model** (avoids loops).
+- **`X-Chatty-Fallback-Used: 1`** on the HTTP response when the successful completion used the fallback model.
+
+Applies to **`POST /chat`** and **`POST /v1/chat/completions`** (streaming and non-streaming).
+
+### Why
+
+Keeps traffic serving on a cheaper or higher-quota model when the primary is throttled, without queues or client-side retries. One retry only so failures stay visible if both models are limited.
+
+### Docs
+
+Set **`GROQ_FALLBACK_MODEL`** to a model id that differs from **`GROQ_MODEL`** / per-request `model`. Example: primary `llama-3.3-70b-versatile`, fallback `llama-3.1-8b-instant`. See `.env.example`.

@@ -7,7 +7,8 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from groq import AsyncStream
+import groq
+from groq import AsyncGroq, AsyncStream
 from groq.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,38 @@ def resolve_model(request_model: str | None) -> str:
     if request_model and request_model.strip():
         return request_model.strip()
     return default_model()
+
+
+def fallback_model() -> str | None:
+    m = os.environ.get("GROQ_FALLBACK_MODEL", "").strip()
+    return m or None
+
+
+def with_fallback_header(headers: dict[str, str], used_fallback: bool) -> dict[str, str]:
+    if not used_fallback:
+        return headers
+    return {**headers, "X-Chatty-Fallback-Used": "1"}
+
+
+async def chat_completions_create_with_fallback(
+    client: AsyncGroq,
+    kwargs: dict[str, Any],
+) -> tuple[Any, bool]:
+    """On 429, retry once with ``GROQ_FALLBACK_MODEL`` if set and different from ``kwargs['model']``."""
+    try:
+        result = await client.chat.completions.create(**kwargs)
+        return result, False
+    except (groq.RateLimitError, groq.APIStatusError) as exc:
+        # RateLimitError subclasses APIStatusError; only gate plain APIStatusError on 429.
+        if isinstance(exc, groq.APIStatusError) and not isinstance(exc, groq.RateLimitError):
+            if getattr(exc, "status_code", None) != 429:
+                raise
+        fb = fallback_model()
+        primary = kwargs.get("model")
+        if not fb or fb == primary:
+            raise
+        result = await client.chat.completions.create(**{**kwargs, "model": fb})
+        return result, True
 
 
 class OpenAIChatCompletionRequest(BaseModel):

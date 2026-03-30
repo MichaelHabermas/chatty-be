@@ -12,9 +12,11 @@ from pydantic import BaseModel, Field
 from app.groq_chat import (
     OpenAIChatCompletionRequest,
     chat_completion_kwargs,
+    chat_completions_create_with_fallback,
     default_model,
     groq_observability_headers,
     sse_stream_with_observability,
+    with_fallback_header,
 )
 
 GROQ_HTTP_EXCEPTIONS = (
@@ -112,22 +114,30 @@ async def chat(body: ChatRequest):
             stream=True,
         )
         try:
-            stream = await client.chat.completions.create(**chat_completion_kwargs(v1_body))
+            kwargs = chat_completion_kwargs(v1_body)
+            stream, used_fb = await chat_completions_create_with_fallback(client, kwargs)
         except GROQ_HTTP_EXCEPTIONS as e:
             raise _groq_error_to_http(e) from e
         obs, sse_body = await sse_stream_with_observability(stream)
+        obs = with_fallback_header(obs, used_fb)
         return _streaming_sse_response(obs, sse_body)
 
     t0 = time.perf_counter()
     try:
-        completion = await client.chat.completions.create(
-            model=default_model(),
-            messages=[{"role": "user", "content": body.prompt}],
+        completion, used_fb = await chat_completions_create_with_fallback(
+            client,
+            {
+                "model": default_model(),
+                "messages": [{"role": "user", "content": body.prompt}],
+            },
         )
     except GROQ_HTTP_EXCEPTIONS as e:
         raise _groq_error_to_http(e) from e
     dur_ms = (time.perf_counter() - t0) * 1000.0
-    obs = groq_observability_headers(duration_ms=dur_ms, request_id=completion.id)
+    obs = with_fallback_header(
+        groq_observability_headers(duration_ms=dur_ms, request_id=completion.id),
+        used_fb,
+    )
     return JSONResponse(
         content=ChatResponse(
             prompt=body.prompt,
@@ -143,16 +153,20 @@ async def openai_chat_completions(body: OpenAIChatCompletionRequest):
     kwargs = chat_completion_kwargs(body)
     t0 = time.perf_counter()
     try:
-        result = await client.chat.completions.create(**kwargs)
+        result, used_fb = await chat_completions_create_with_fallback(client, kwargs)
     except GROQ_HTTP_EXCEPTIONS as e:
         raise _groq_error_to_http(e) from e
 
     if body.stream:
         obs, sse_body = await sse_stream_with_observability(result)
+        obs = with_fallback_header(obs, used_fb)
         return _streaming_sse_response(obs, sse_body)
 
     dur_ms = (time.perf_counter() - t0) * 1000.0
-    obs = groq_observability_headers(duration_ms=dur_ms, request_id=result.id)
+    obs = with_fallback_header(
+        groq_observability_headers(duration_ms=dur_ms, request_id=result.id),
+        used_fb,
+    )
     return JSONResponse(
         content=result.model_dump(mode="json", exclude_none=True),
         headers=obs,
