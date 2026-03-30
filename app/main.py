@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.groq_chat import (
-    ChatMessageBody,
     OpenAIChatCompletionRequest,
     chat_completion_kwargs,
     default_model,
@@ -101,7 +100,7 @@ async def chat(body: ChatRequest):
     client: groq.AsyncGroq = app.state.groq
     if body.stream:
         v1_body = OpenAIChatCompletionRequest(
-            messages=[ChatMessageBody(role="user", content=body.prompt)],
+            messages=[{"role": "user", "content": body.prompt}],
             stream=True,
         )
         try:

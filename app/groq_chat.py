@@ -24,16 +24,11 @@ def resolve_model(request_model: str | None) -> str:
     return default_model()
 
 
-class ChatMessageBody(BaseModel):
-    role: str
-    content: str
-
-
 class OpenAIChatCompletionRequest(BaseModel):
-    """Subset of OpenAI chat completions for Groq."""
+    """OpenAI chat completions shape forwarded to Groq (agent-friendly subset)."""
 
     model: str | None = None
-    messages: list[ChatMessageBody]
+    messages: list[dict[str, Any]] = Field(..., min_length=1)
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
@@ -41,12 +36,16 @@ class OpenAIChatCompletionRequest(BaseModel):
     top_p: float | None = None
     stop: str | list[str] | None = None
     user: str | None = Field(default=None, description="Stable user id for abuse detection")
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any = None
+    parallel_tool_calls: bool | None = None
+    response_format: dict[str, Any] | None = None
 
 
 def chat_completion_kwargs(body: OpenAIChatCompletionRequest) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": resolve_model(body.model),
-        "messages": [m.model_dump() for m in body.messages],
+        "messages": body.messages,
         "stream": body.stream,
     }
     if body.temperature is not None:
@@ -61,6 +60,14 @@ def chat_completion_kwargs(body: OpenAIChatCompletionRequest) -> dict[str, Any]:
         kwargs["stop"] = body.stop
     if body.user is not None:
         kwargs["user"] = body.user
+    if body.tools is not None:
+        kwargs["tools"] = body.tools
+    if body.tool_choice is not None:
+        kwargs["tool_choice"] = body.tool_choice
+    if body.parallel_tool_calls is not None:
+        kwargs["parallel_tool_calls"] = body.parallel_tool_calls
+    if body.response_format is not None:
+        kwargs["response_format"] = body.response_format
     return kwargs
 
 
