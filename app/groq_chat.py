@@ -41,6 +41,33 @@ def fallback_model() -> str | None:
     return m or None
 
 
+def max_output_tokens_ceiling() -> int | None:
+    """Optional ``CHATTY_MAX_OUTPUT_TOKENS`` — positive int, or ``None`` if unset/invalid."""
+    raw = os.environ.get("CHATTY_MAX_OUTPUT_TOKENS", "").strip()
+    if not raw:
+        return None
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def apply_output_token_cap(kwargs: dict[str, Any]) -> None:
+    """Clamp ``max_tokens`` / ``max_completion_tokens`` to ``CHATTY_MAX_OUTPUT_TOKENS`` when set."""
+    cap = max_output_tokens_ceiling()
+    if cap is None:
+        return
+    for key in ("max_tokens", "max_completion_tokens"):
+        if key not in kwargs or kwargs[key] is None:
+            continue
+        try:
+            v = int(kwargs[key])
+        except (TypeError, ValueError):
+            continue
+        kwargs[key] = min(v, cap)
+
+
 def with_fallback_header(headers: dict[str, str], used_fallback: bool) -> dict[str, str]:
     if not used_fallback:
         return headers
@@ -114,6 +141,7 @@ def chat_completion_kwargs(body: OpenAIChatCompletionRequest) -> dict[str, Any]:
         kwargs["parallel_tool_calls"] = body.parallel_tool_calls
     if body.response_format is not None:
         kwargs["response_format"] = body.response_format
+    apply_output_token_cap(kwargs)
     return kwargs
 
 

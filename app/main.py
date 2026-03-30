@@ -8,7 +8,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import groq
 import httpx
@@ -28,6 +28,7 @@ from app.completion_webhook import (
 )
 from app.groq_chat import (
     OpenAIChatCompletionRequest,
+    apply_output_token_cap,
     chat_completion_kwargs,
     chat_completions_create_with_fallback,
     default_model,
@@ -250,13 +251,12 @@ async def chat(  # pylint: disable=too-many-locals
         return _streaming_sse_response(obs, sse_body)
 
     t0 = time.perf_counter()
+    chat_kw: dict[str, Any] = {"model": default_model(), "messages": messages}
+    apply_output_token_cap(chat_kw)
     try:
         completion, used_fb = await chat_completions_create_with_fallback(
             client,
-            {
-                "model": default_model(),
-                "messages": messages,
-            },
+            chat_kw,
         )
     except GROQ_HTTP_EXCEPTIONS as e:
         raise _groq_error_to_http(e) from e

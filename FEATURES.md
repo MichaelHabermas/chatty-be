@@ -95,6 +95,22 @@ Webhook errors and timeouts are ignored (**debug** log). See [`CLAUDE.md`](CLAUD
 
 ---
 
+## Output token ceiling (spend guard)
+
+### Added
+
+- **`CHATTY_MAX_OUTPUT_TOKENS`** (optional env) — positive integer. When set, Chatty clamps **`max_tokens`** and **`max_completion_tokens`** on outgoing Groq calls to **at most** this value (per field: `min(client_value, ceiling)`). Fields the client omits are unchanged (no default cap injected).
+
+### Why
+
+Limits runaway spend from misconfigured clients while staying a transparent proxy for normal requests.
+
+### Docs
+
+Applied in **`chat_completion_kwargs`** (`/v1/chat/completions` and streaming **`/chat`**) and on the **`POST /chat`** JSON path when those keys are present. See [`CLAUDE.md`](CLAUDE.md).
+
+---
+
 ## Rate-limit fallback model
 
 ### Added
