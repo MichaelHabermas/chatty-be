@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,6 +12,10 @@ from groq.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, Field
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
+
+
+def _sse_chunk_line(chunk: ChatCompletionChunk) -> str:
+    return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
 
 
 def default_model() -> str:
@@ -71,11 +76,52 @@ def chat_completion_kwargs(body: OpenAIChatCompletionRequest) -> dict[str, Any]:
     return kwargs
 
 
+def groq_observability_headers(
+    *,
+    duration_ms: float,
+    timing_name: str = "groq",
+    request_id: str | None = None,
+) -> dict[str, str]:
+    """Server-Timing + Groq completion id for correlating with Groq support and logs."""
+    headers: dict[str, str] = {
+        "Server-Timing": f"{timing_name};dur={duration_ms:.2f}",
+    }
+    if request_id:
+        headers["X-Groq-Request-Id"] = request_id
+    return headers
+
+
 async def sse_chat_completion_chunks(
     stream: AsyncStream[ChatCompletionChunk],
 ) -> AsyncIterator[str]:
     try:
         async for chunk in stream:
-            yield f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
+            yield _sse_chunk_line(chunk)
     finally:
         yield "data: [DONE]\n\n"
+
+
+async def sse_stream_with_observability(
+    stream: AsyncStream[ChatCompletionChunk],
+) -> tuple[dict[str, str], AsyncIterator[str]]:
+    """Peek the first SSE chunk so we can send TTFB + request id in response headers."""
+    t0 = time.perf_counter()
+    chunk_iter = stream.__aiter__()
+    first = await chunk_iter.__anext__()
+    ttfb_ms = (time.perf_counter() - t0) * 1000.0
+    req_id = first.id or None
+    obs = groq_observability_headers(
+        duration_ms=ttfb_ms,
+        timing_name="groq-ttfb",
+        request_id=req_id,
+    )
+
+    async def _body() -> AsyncIterator[str]:
+        try:
+            yield _sse_chunk_line(first)
+            async for chunk in chunk_iter:
+                yield _sse_chunk_line(chunk)
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return obs, _body()

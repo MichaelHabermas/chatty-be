@@ -1,16 +1,20 @@
 import os
+import time
 from contextlib import asynccontextmanager
 
 import groq
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from groq.types.chat import ChatCompletion
 from pydantic import BaseModel, Field
 
 from app.groq_chat import (
     OpenAIChatCompletionRequest,
     chat_completion_kwargs,
     default_model,
-    sse_chat_completion_chunks,
+    groq_observability_headers,
+    sse_stream_with_observability,
 )
 
 GROQ_HTTP_EXCEPTIONS = (
@@ -20,13 +24,6 @@ GROQ_HTTP_EXCEPTIONS = (
     groq.APIConnectionError,
     groq.APIStatusError,
 )
-
-_GROQ_SIMPLE_STATUS: dict[type[Exception], int] = {
-    groq.AuthenticationError: 401,
-    groq.PermissionDeniedError: 403,
-    groq.RateLimitError: 429,
-}
-
 
 def _require_api_key() -> str:
     key = os.environ.get("GROQ_API_KEY")
@@ -43,19 +40,22 @@ def _groq_error_to_http(exc: Exception) -> HTTPException:
         if resp is not None:
             try:
                 detail = resp.text or detail
-            except Exception:
+            except httpx.HTTPError:
                 pass
         code = status if 400 <= status < 600 else 502
         return HTTPException(status_code=code, detail=detail)
     if isinstance(exc, groq.APIConnectionError):
         return HTTPException(status_code=502, detail="Groq API unreachable")
-    for exc_type, code in _GROQ_SIMPLE_STATUS.items():
-        if isinstance(exc, exc_type):
-            return HTTPException(status_code=code, detail=str(exc))
+    if isinstance(exc, groq.AuthenticationError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, groq.PermissionDeniedError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, groq.RateLimitError):
+        return HTTPException(status_code=429, detail=str(exc))
     raise exc
 
 
-def _first_choice_content(completion: object) -> str:
+def _first_choice_content(completion: ChatCompletion) -> str:
     if not completion.choices:
         return ""
     msg = completion.choices[0].message
@@ -68,6 +68,14 @@ STREAM_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
 }
+
+
+def _streaming_sse_response(obs: dict[str, str], sse_body):
+    return StreamingResponse(
+        sse_body,
+        media_type="text/event-stream",
+        headers={**STREAM_HEADERS, **obs},
+    )
 
 
 @asynccontextmanager
@@ -107,12 +115,10 @@ async def chat(body: ChatRequest):
             stream = await client.chat.completions.create(**chat_completion_kwargs(v1_body))
         except GROQ_HTTP_EXCEPTIONS as e:
             raise _groq_error_to_http(e) from e
-        return StreamingResponse(
-            sse_chat_completion_chunks(stream),
-            media_type="text/event-stream",
-            headers=STREAM_HEADERS,
-        )
+        obs, sse_body = await sse_stream_with_observability(stream)
+        return _streaming_sse_response(obs, sse_body)
 
+    t0 = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
             model=default_model(),
@@ -120,27 +126,37 @@ async def chat(body: ChatRequest):
         )
     except GROQ_HTTP_EXCEPTIONS as e:
         raise _groq_error_to_http(e) from e
-
-    return ChatResponse(prompt=body.prompt, response=_first_choice_content(completion))
+    dur_ms = (time.perf_counter() - t0) * 1000.0
+    obs = groq_observability_headers(duration_ms=dur_ms, request_id=completion.id)
+    return JSONResponse(
+        content=ChatResponse(
+            prompt=body.prompt,
+            response=_first_choice_content(completion),
+        ).model_dump(),
+        headers=obs,
+    )
 
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(body: OpenAIChatCompletionRequest):
     client: groq.AsyncGroq = app.state.groq
     kwargs = chat_completion_kwargs(body)
+    t0 = time.perf_counter()
     try:
         result = await client.chat.completions.create(**kwargs)
     except GROQ_HTTP_EXCEPTIONS as e:
         raise _groq_error_to_http(e) from e
 
     if body.stream:
-        return StreamingResponse(
-            sse_chat_completion_chunks(result),
-            media_type="text/event-stream",
-            headers=STREAM_HEADERS,
-        )
+        obs, sse_body = await sse_stream_with_observability(result)
+        return _streaming_sse_response(obs, sse_body)
 
-    return JSONResponse(content=result.model_dump(mode="json", exclude_none=True))
+    dur_ms = (time.perf_counter() - t0) * 1000.0
+    obs = groq_observability_headers(duration_ms=dur_ms, request_id=result.id)
+    return JSONResponse(
+        content=result.model_dump(mode="json", exclude_none=True),
+        headers=obs,
+    )
 
 
 @app.get("/v1/models")
