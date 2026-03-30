@@ -1,0 +1,13 @@
+.git
+.gitignore
+venv
+.venv
+__pycache__
+*.py[cod]
+*.pyc
+.Python
+.env
+.env.*
+image.png
+LICENSE
+*.md
