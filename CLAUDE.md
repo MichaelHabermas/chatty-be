@@ -23,12 +23,16 @@ Server: [http://localhost:8000](http://localhost:8000) — API docs at `/docs`.
 
 FastAPI app in `app/main.py` wrapping the Groq API. Lifespan creates an `AsyncGroq` client and an `httpx.AsyncClient` for Tavily, stores them on `app.state`, and closes them on shutdown. Shared request mapping and SSE streaming live in `app/groq_chat.py`. Tavily helpers live in `app/tavily_client.py`.
 
-- **`POST /chat`** — Simple prompt → Groq (default model `llama-3.3-70b-versatile`, override with `GROQ_MODEL`). JSON body: `prompt` (required), `stream` (optional, default false), `web_search` (optional, default false). If `stream` is false, response is `ChatResponse` (`prompt`, `response`). If `stream` is true, the response is **SSE** (`text/event-stream`) in the same shape as OpenAI streaming (`data: {...}` lines, then `data: [DONE]`).
-- **`POST /v1/chat/completions`** — OpenAI-compatible chat completions (subset of fields): `messages` (required), optional `model`, `stream`, `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `user`, `web_search`. Non-streaming returns JSON matching Groq’s `ChatCompletion` shape; streaming returns SSE as above.
+- **`POST /chat`** — Simple prompt → Groq (default model `llama-3.3-70b-versatile`, override with `GROQ_MODEL`). JSON body: `prompt` (required), `stream` (optional, default false), `web_search` (optional, default false), `web_search_mode` (optional: `off` \| `on` \| `auto`; **omitted defaults to `auto`** — server-side heuristics decide Tavily). If `stream` is false, response is `ChatResponse` (`prompt`, `response`). If `stream` is true, the response is **SSE** (`text/event-stream`) in the same shape as OpenAI streaming (`data: {...}` lines, then `data: [DONE]`).
+- **`POST /v1/chat/completions`** — OpenAI-compatible chat completions (subset of fields): `messages` (required), optional `model`, `stream`, `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `user`, `web_search`, `web_search_mode` (**omitted ⇒ `auto`**). Non-streaming returns JSON matching Groq’s `ChatCompletion` shape; streaming returns SSE as above.
 
 ### Optional web search (Tavily)
 
-When **`web_search` is true** on the JSON body **or** the header **`X-Chatty-Web-Search: true`** (also `1` / `yes`, case-insensitive) is sent, Chatty calls **Tavily Search** first using the last user message text as the query, injects a **system** message with summarized results, then calls Groq. **Latency** is Tavily + Groq sequentially. **`TAVILY_API_KEY`** must be set when web search is requested; otherwise the server returns **503**. If web search is on but no user text can be extracted (e.g. empty content), Chatty skips Tavily and calls Groq only. **Privacy:** enabling web search sends the derived query to Tavily’s API; see [Tavily](https://www.tavily.com/).
+**Default:** If **`web_search_mode`** is **omitted** and **`web_search`** is false and the header is not a tri-state value, behavior is **`auto`** (heuristics + optional router). **Legacy on:** **`web_search` is true** with **`web_search_mode`** omitted and no tri-state header still forces Tavily on. **Explicit on:** header **`X-Chatty-Web-Search: true`** (also `1` / `yes`) **or** **`web_search_mode`: `on`** **or** header **`X-Chatty-Web-Search: on`**. **Explicit off:** **`web_search_mode`: `off`** or header **`false`** / **`0`** / **`no`** / **`off`**.
+
+**Auto (server decides):** set **`web_search_mode`: `auto`** or send **`X-Chatty-Web-Search: auto`**. Chatty runs **heuristics** on the last user message (time-sensitive / news / URLs / code vs chitchat, etc.). If the signal is ambiguous (**maybe**), Chatty optionally calls a **small Groq JSON router** when **`GROQ_WEB_SEARCH_ROUTER_MODEL`** is set; if unset, ambiguous auto resolves to **no** Tavily (fewer surprise API calls). Auto adds **no** extra Groq latency when the router env is unset. **503** behavior is unchanged: if the resolved decision is to run Tavily and **`TAVILY_API_KEY`** is missing, the server returns **503** (auto does not fall back to Groq-only).
+
+When web search is **on**, Chatty calls **Tavily Search** first using the last user message text as the query, injects a **system** message with summarized results, then calls Groq. **Latency** is Tavily + Groq sequentially (and for auto+router, one small Groq call before that when the router runs). If web search is on but no user text can be extracted, Chatty skips Tavily and calls Groq only. **Privacy:** enabling web search sends the derived query to Tavily’s API; **auto** may also send the user text to Groq for routing when the router is enabled; see [Tavily](https://www.tavily.com/).
 
 - **`GET /v1/models`** — Lists models from Groq (OpenAI-compatible list response).
 - **`GET /health`** — Health check.
@@ -59,7 +63,8 @@ From `.env.example`:
 
 - `GROQ_API_KEY` (required) — Groq console
 - `GROQ_MODEL` (optional) — defaults to `llama-3.3-70b-versatile`
-- `TAVILY_API_KEY` (optional) — required only when `web_search` / `X-Chatty-Web-Search` is used
+- `TAVILY_API_KEY` (optional) — required when the resolved decision runs Tavily (explicit on or auto when heuristics/router say yes)
+- `GROQ_WEB_SEARCH_ROUTER_MODEL` (optional) — Groq model id for the JSON router when `web_search_mode` is `auto` and heuristics are ambiguous; unset means heuristic-only auto (no router call)
 - `TAVILY_MAX_RESULTS` (optional) — default 5, capped at 20
 - `TAVILY_SEARCH_DEPTH` (optional) — `basic`, `advanced`, `fast`, or `ultra-fast` (default `basic`)
 

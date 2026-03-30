@@ -7,15 +7,17 @@ Short notes on what we add and why, so the proxy stays intentional as it grows.
 ### Added
 
 - **`web_search`** on **`POST /chat`** and **`POST /v1/chat/completions`** (default false), plus **`X-Chatty-Web-Search`** header (`true` / `1` / `yes`) for clients that cannot add custom JSON fields (e.g. OpenAI SDK without `extra_body`).
-- When enabled, **Tavily Search** runs first; results are injected as a **system** message, then Groq runs as usual (including streaming). Env: **`TAVILY_API_KEY`** (required when the feature is used), optional **`TAVILY_MAX_RESULTS`**, **`TAVILY_SEARCH_DEPTH`**.
+- **`web_search_mode`**: **`off`** \| **`on`** \| **`auto`** — **omitted ⇒ `auto`** (server decides via heuristics + optional router). Explicit **`off`** / **`on`** overrides. Legacy **`web_search: true`** with **`web_search_mode`** omitted still forces Tavily on. **`auto`** uses **heuristics** on the last user message, with an optional **Groq JSON router** when **`GROQ_WEB_SEARCH_ROUTER_MODEL`** is set and the heuristic signal is ambiguous (unset router env ⇒ ambiguous **auto** resolves to no Tavily).
+- Header tri-state: **`X-Chatty-Web-Search`**: **`auto`**, **`on`**, **`off`**, or legacy **`true`** / **`1`** / **`yes`** (and **`false`** / **`0`** / **`no`** for off).
+- When enabled, **Tavily Search** runs first; results are injected as a **system** message, then Groq runs as usual (including streaming). Env: **`TAVILY_API_KEY`** (required when the resolved decision uses Tavily), optional **`TAVILY_MAX_RESULTS`**, **`TAVILY_SEARCH_DEPTH`**, optional **`GROQ_WEB_SEARCH_ROUTER_MODEL`**.
 
 ### Why
 
-Grounds the model on live web context without implementing a full tool-loop in Chatty; keeps the Groq path unchanged aside from augmented `messages`.
+Grounds the model on live web context without implementing a full tool-loop in Chatty; keeps the Groq path unchanged aside from augmented `messages`. **Auto** avoids requiring clients to guess when to set **`web_search`**, while keeping explicit control for tests and deterministic clients.
 
 ### Docs
 
-If the last user turn has no extractable text, Tavily is skipped. Queries are sent to Tavily when the feature is on; see [`CLAUDE.md`](CLAUDE.md).
+If the last user turn has no extractable text, Tavily is skipped. Queries are sent to Tavily when the feature is on; **auto** may send user text to Groq for routing when **`GROQ_WEB_SEARCH_ROUTER_MODEL`** is set; see [`CLAUDE.md`](CLAUDE.md).
 
 ---
 

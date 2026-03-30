@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import groq
 from groq import AsyncGroq, AsyncStream
@@ -69,6 +69,7 @@ class OpenAIChatCompletionRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(..., min_length=1)
     stream: bool = False
     web_search: bool = False
+    web_search_mode: Literal["off", "on", "auto"] | None = None
     temperature: float | None = None
     max_tokens: int | None = None
     max_completion_tokens: int | None = None

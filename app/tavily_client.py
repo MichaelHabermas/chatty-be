@@ -14,6 +14,7 @@ _MAX_SNIPPET_CHARS = 800
 
 
 def tavily_max_results() -> int:
+    """Return Tavily max_results from env, clamped to 1–20 (default 5)."""
     raw = os.environ.get("TAVILY_MAX_RESULTS", "").strip()
     if not raw:
         return 5
@@ -24,12 +25,14 @@ def tavily_max_results() -> int:
 
 
 def tavily_search_depth() -> str:
+    """Return Tavily search_depth from env, or a supported default."""
     d = os.environ.get("TAVILY_SEARCH_DEPTH", "basic").strip().lower()
     allowed = frozenset({"basic", "advanced", "fast", "ultra-fast"})
     return d if d in allowed else "basic"
 
 
 def extract_last_user_text(messages: list[dict[str, Any]]) -> str:
+    """Return the last user message text (string or multimodal text parts)."""
     for msg in reversed(messages):
         if msg.get("role") != "user":
             continue
@@ -48,6 +51,7 @@ def extract_last_user_text(messages: list[dict[str, Any]]) -> str:
 
 
 def _format_web_context(results: list[dict[str, Any]]) -> str:
+    """Format Tavily result dicts into a single block of context text."""
     lines = [
         "The following are web search results. Use them to ground your answer and cite URLs when relevant.",
         "",
@@ -64,6 +68,7 @@ def inject_web_context(
     messages: list[dict[str, Any]],
     context_text: str,
 ) -> list[dict[str, Any]]:
+    """Return a copy of messages with web context merged into the system message."""
     out = copy.deepcopy(messages)
     if not context_text.strip():
         return out
@@ -80,6 +85,7 @@ def inject_web_context(
 
 
 def _tavily_http_error(resp: httpx.Response) -> HTTPException:
+    """Build an HTTPException from a non-OK Tavily response."""
     detail = resp.text
     try:
         data = resp.json()
@@ -106,6 +112,7 @@ def _tavily_http_error(resp: httpx.Response) -> HTTPException:
 
 
 async def tavily_search(http: httpx.AsyncClient, *, query: str) -> dict[str, Any]:
+    """Call the Tavily Search API and return the JSON body (or raise HTTPException)."""
     api_key = os.environ.get("TAVILY_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(
@@ -148,6 +155,7 @@ async def augment_messages_with_web(
     *,
     web_search: bool,
 ) -> list[dict[str, Any]]:
+    """If web_search is true, run Tavily on the last user text and inject results."""
     if not web_search:
         return messages
     query = extract_last_user_text(messages)
@@ -159,9 +167,3 @@ async def augment_messages_with_web(
         results = []
     ctx = _format_web_context([r for r in results if isinstance(r, dict)])
     return inject_web_context(messages, ctx)
-
-
-def web_search_from_header(value: str | None) -> bool:
-    if value is None or not value.strip():
-        return False
-    return value.strip().lower() in ("true", "1", "yes")

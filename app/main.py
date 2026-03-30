@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import time
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 import groq
 import httpx
@@ -28,7 +28,8 @@ from app.groq_chat import (
     sse_stream_with_observability,
     with_fallback_header,
 )
-from app.tavily_client import augment_messages_with_web, web_search_from_header
+from app.tavily_client import augment_messages_with_web
+from app.web_routing import resolve_use_web_search
 
 GROQ_HTTP_EXCEPTIONS = (
     groq.AuthenticationError,
@@ -165,6 +166,7 @@ class ChatRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     stream: bool = False
     web_search: bool = False
+    web_search_mode: Literal["off", "on", "auto"] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -184,10 +186,17 @@ async def chat(
 ):
     client: groq.AsyncGroq = app.state.groq
     http: httpx.AsyncClient = app.state.http
-    use_web = body.web_search or web_search_from_header(x_chatty_web_search)
+    base_messages = [{"role": "user", "content": body.prompt}]
+    use_web = await resolve_use_web_search(
+        client,
+        base_messages,
+        web_search_mode=body.web_search_mode,
+        web_search=body.web_search,
+        header=x_chatty_web_search,
+    )
     messages = await augment_messages_with_web(
         http,
-        [{"role": "user", "content": body.prompt}],
+        base_messages,
         web_search=use_web,
     )
     if body.stream:
@@ -236,7 +245,13 @@ async def openai_chat_completions(
 ):
     client: groq.AsyncGroq = app.state.groq
     http: httpx.AsyncClient = app.state.http
-    use_web = body.web_search or web_search_from_header(x_chatty_web_search)
+    use_web = await resolve_use_web_search(
+        client,
+        list(body.messages),
+        web_search_mode=body.web_search_mode,
+        web_search=body.web_search,
+        header=x_chatty_web_search,
+    )
     augmented = await augment_messages_with_web(
         http,
         list(body.messages),
