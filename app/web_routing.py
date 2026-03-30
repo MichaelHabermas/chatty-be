@@ -7,9 +7,9 @@ import os
 import re
 from typing import Any, Literal
 
-import groq
 from groq import AsyncGroq
 
+from app.groq_chat import GROQ_CLIENT_EXCEPTIONS
 from app.tavily_client import extract_last_user_text
 
 WebSearchTriState = Literal["off", "on", "auto"]
@@ -117,15 +117,6 @@ def web_search_router_model() -> str | None:
     return m or None
 
 
-_ROUTER_GROQ_ERRORS = (
-    groq.AuthenticationError,
-    groq.PermissionDeniedError,
-    groq.RateLimitError,
-    groq.APIConnectionError,
-    groq.APIStatusError,
-)
-
-
 async def llm_needs_web_search(
     client: AsyncGroq,
     user_text: str,
@@ -144,7 +135,7 @@ async def llm_needs_web_search(
                 {"role": "user", "content": user_text[:4000]},
             ],
         )
-    except _ROUTER_GROQ_ERRORS:
+    except GROQ_CLIENT_EXCEPTIONS:
         return False
 
     raw = ""

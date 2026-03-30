@@ -15,6 +15,15 @@ from pydantic import BaseModel, Field
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
+# Shared by route handlers and web-search router when mapping Groq errors.
+GROQ_CLIENT_EXCEPTIONS = (
+    groq.AuthenticationError,
+    groq.PermissionDeniedError,
+    groq.RateLimitError,
+    groq.APIConnectionError,
+    groq.APIStatusError,
+)
+
 
 def _sse_chunk_line(chunk: ChatCompletionChunk) -> str:
     return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
@@ -158,16 +167,6 @@ def groq_observability_headers(
     if request_id:
         headers["X-Groq-Request-Id"] = request_id
     return headers
-
-
-async def sse_chat_completion_chunks(
-    stream: AsyncStream[ChatCompletionChunk],
-) -> AsyncIterator[str]:
-    try:
-        async for chunk in stream:
-            yield _sse_chunk_line(chunk)
-    finally:
-        yield "data: [DONE]\n\n"
 
 
 async def sse_stream_with_observability(

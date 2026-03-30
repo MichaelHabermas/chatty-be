@@ -147,3 +147,17 @@ Lets you expose Chatty on a network without leaving Groq-backed routes open whil
 ### Docs
 
 If **`CHATTY_API_KEY`** is unset or blank, behavior is unchanged (no Chatty-side auth). Generate a long random secret for production when enabled.
+
+---
+
+## Internal: route handler simplification (no API change)
+
+### Changed
+
+- Single **`GROQ_CLIENT_EXCEPTIONS`** tuple in **`app/groq_chat.py`** used by **`app/main.py`**, **`app/web_routing.py`** (router), and shared helpers.
+- **`POST /chat`** and **`POST /v1/chat/completions`** share **`_prepare_messages_for_groq`**, **`_sse_after_groq_stream`**, and **`_schedule_non_stream_completion_webhook`**; **`POST /chat`** non-stream uses **`chat_completion_kwargs`** like the OpenAI route (same model cap + token clamp behavior).
+- Removed unused **`sse_chat_completion_chunks`** from **`app/groq_chat.py`**.
+
+### Why
+
+Less duplicated Groq/Tavily/policy/SSE/webhook plumbing, easier to change safely; behavior and response shapes are unchanged.
