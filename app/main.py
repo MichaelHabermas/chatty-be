@@ -15,6 +15,7 @@ import httpx
 from groq import AsyncStream
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from groq.types.chat import ChatCompletion, ChatCompletionChunk
@@ -89,6 +90,14 @@ def _docs_paths_require_chatty_auth(path: str) -> bool:
     if path in ("/openapi.json", "/redoc"):
         return True
     return path.startswith("/docs")
+
+
+def _cors_allow_origins() -> list[str]:
+    """Comma-separated browser origins for ``Access-Control-Allow-Origin`` (e.g. Netlify SPA)."""
+    raw = os.environ.get("CHATTY_CORS_ORIGINS", "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 class ChattyDocsAuthMiddleware(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods
@@ -248,6 +257,12 @@ async def lifespan(fastapi_app: FastAPI):
 
 app = FastAPI(title="Chatty", lifespan=lifespan)
 app.add_middleware(ChattyDocsAuthMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allow_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ChatRequest(BaseModel):

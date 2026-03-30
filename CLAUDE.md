@@ -67,6 +67,7 @@ From `.env.example`:
 - `GROQ_WEB_SEARCH_ROUTER_MODEL` (optional) — Groq model id for the JSON router when `web_search_mode` is `auto` and heuristics are ambiguous; unset means heuristic-only auto (no router call)
 - `TAVILY_MAX_RESULTS` (optional) — default 5, capped at 20
 - `TAVILY_SEARCH_DEPTH` (optional) — `basic`, `advanced`, `fast`, or `ultra-fast` (default `basic`)
+- `CHATTY_CORS_ORIGINS` (optional) — comma-separated allowed browser origins for CORS (e.g. `https://your-app.netlify.app`); omit for same-origin-only; cross-origin SPAs need this or a reverse proxy on the same host
 - `CHATTY_REQUEST_POLICY` (optional) — path to JSON request policy (prepend, deny regexes, redact rules); invalid policy fails startup
 - `CHATTY_PREPEND_SYSTEM` (optional) — extra system prepend (merged with file when both set)
 - `CHATTY_DENY_MESSAGE_PATTERN` (optional) — one extra deny regex (merged with file list)

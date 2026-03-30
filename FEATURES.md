@@ -2,6 +2,22 @@
 
 Short notes on what we add and why, so the proxy stays intentional as it grows.
 
+## CORS for browser clients (split FE / BE)
+
+### Added
+
+- **`CHATTY_CORS_ORIGINS`** — comma-separated list of allowed **`Origin`** values (e.g. `https://chatty-mc-fe.netlify.app`). Registers Starlette **`CORSMiddleware`** so **`OPTIONS`** preflight and cross-origin **`POST`** / SSE to `/chat` and `/v1/*` work from an SPA on another host.
+
+### Why
+
+Browsers enforce CORS; a Netlify UI calling a Render API is cross-origin and fails without **`Access-Control-Allow-Origin`** (and preflight handling). Operators set origins explicitly instead of opening `*`.
+
+### Docs
+
+See [`CLAUDE.md`](CLAUDE.md) configuration.
+
+---
+
 ## Optional Tavily web search (prefetch grounding)
 
 ### Added
