@@ -77,6 +77,24 @@ Gives callers a standard, stateless way to tie a Chatty HTTP response to Groq’
 
 ---
 
+## Completion webhook (telemetry sink)
+
+### Added
+
+- **`CHATTY_COMPLETION_WEBHOOK_URL`** — optional URL; after a **successful** Groq completion, Chatty **POST**s JSON (no message bodies). **Non-streaming**: runs via **`BackgroundTasks`** after the HTTP response is sent. **Streaming**: POST runs when the SSE body finishes; **`latency_kind`** is **`stream_total`**, with **`groq_ttfb_ms`** from the first chunk.
+- **`CHATTY_WEBHOOK_BEARER`** — optional; if set, **`Authorization: Bearer`** on the webhook request.
+- Payload includes **`event`**: `chatty.completion`, **`groq_request_id`**, **`model`**, **`route`** (`/chat` or `/v1/chat/completions`), **`stream`**, **`latency_ms`**, **`latency_kind`** (`groq_round_trip` \| `stream_total`), optional **`web_sources_count`** when Tavily ran, **`fallback_used`**.
+
+### Why
+
+Lets operators push correlation and latency into their own pipeline (SIEM, metrics) without client changes.
+
+### Docs
+
+Webhook errors and timeouts are ignored (**debug** log). See [`CLAUDE.md`](CLAUDE.md).
+
+---
+
 ## Rate-limit fallback model
 
 ### Added

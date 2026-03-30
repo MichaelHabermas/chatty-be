@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 import groq
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from groq.types.chat import ChatCompletion
@@ -21,12 +21,18 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from app.completion_webhook import (
+    build_completion_webhook_payload,
+    maybe_post_completion_webhook,
+    wrap_sse_with_completion_webhook,
+)
 from app.groq_chat import (
     OpenAIChatCompletionRequest,
     chat_completion_kwargs,
     chat_completions_create_with_fallback,
     default_model,
     groq_observability_headers,
+    resolve_model,
     sse_stream_with_observability,
     with_fallback_header,
 )
@@ -196,6 +202,7 @@ async def health():
 @app.post("/chat", dependencies=[Depends(require_chatty_bearer)])
 async def chat(  # pylint: disable=too-many-locals
     body: ChatRequest,
+    background_tasks: BackgroundTasks,
     x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
 ):
     """Simple chat endpoint: optional web search, then Groq (stream or JSON)."""
@@ -225,11 +232,21 @@ async def chat(  # pylint: disable=too-many-locals
             stream, used_fb = await chat_completions_create_with_fallback(client, kwargs)
         except GROQ_HTTP_EXCEPTIONS as e:
             raise _groq_error_to_http(e) from e
-        obs, sse_body = await sse_stream_with_observability(
+        obs, sse_body, ttfb_ms = await sse_stream_with_observability(
             stream,
             web_sources=web_sources,
         )
         obs = with_fallback_header(obs, used_fb)
+        sse_body = wrap_sse_with_completion_webhook(
+            sse_body,
+            http,
+            groq_request_id=obs.get("X-Groq-Request-Id"),
+            model=default_model(),
+            route="/chat",
+            groq_ttfb_ms=ttfb_ms,
+            web_sources=web_sources,
+            used_fallback=used_fb,
+        )
         return _streaming_sse_response(obs, sse_body)
 
     t0 = time.perf_counter()
@@ -248,6 +265,21 @@ async def chat(  # pylint: disable=too-many-locals
         groq_observability_headers(duration_ms=dur_ms, request_id=completion.id),
         used_fb,
     )
+    background_tasks.add_task(
+        maybe_post_completion_webhook,
+        http,
+        build_completion_webhook_payload(
+            groq_request_id=completion.id,
+            model=default_model(),
+            route="/chat",
+            stream=False,
+            latency_ms=dur_ms,
+            latency_kind="groq_round_trip",
+            groq_ttfb_ms=None,
+            web_sources=web_sources,
+            fallback_used=used_fb,
+        ),
+    )
     return JSONResponse(
         content=ChatResponse(
             prompt=body.prompt,
@@ -261,6 +293,7 @@ async def chat(  # pylint: disable=too-many-locals
 @app.post("/v1/chat/completions", dependencies=[Depends(require_chatty_bearer)])
 async def openai_chat_completions(  # pylint: disable=too-many-locals
     body: OpenAIChatCompletionRequest,
+    background_tasks: BackgroundTasks,
     x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
 ):
     """OpenAI-compatible chat completions (subset of fields), with optional web search."""
@@ -280,6 +313,7 @@ async def openai_chat_completions(  # pylint: disable=too-many-locals
     )
     augmented = apply_request_policy(augmented, app.state.request_policy)
     kwargs = chat_completion_kwargs(body.model_copy(update={"messages": augmented}))
+    resolved_model = resolve_model(body.model)
     t0 = time.perf_counter()
     try:
         result, used_fb = await chat_completions_create_with_fallback(client, kwargs)
@@ -287,17 +321,42 @@ async def openai_chat_completions(  # pylint: disable=too-many-locals
         raise _groq_error_to_http(e) from e
 
     if body.stream:
-        obs, sse_body = await sse_stream_with_observability(
+        obs, sse_body, ttfb_ms = await sse_stream_with_observability(
             result,
             web_sources=web_sources,
         )
         obs = with_fallback_header(obs, used_fb)
+        sse_body = wrap_sse_with_completion_webhook(
+            sse_body,
+            http,
+            groq_request_id=obs.get("X-Groq-Request-Id"),
+            model=resolved_model,
+            route="/v1/chat/completions",
+            groq_ttfb_ms=ttfb_ms,
+            web_sources=web_sources,
+            used_fallback=used_fb,
+        )
         return _streaming_sse_response(obs, sse_body)
 
     dur_ms = (time.perf_counter() - t0) * 1000.0
     obs = with_fallback_header(
         groq_observability_headers(duration_ms=dur_ms, request_id=result.id),
         used_fb,
+    )
+    background_tasks.add_task(
+        maybe_post_completion_webhook,
+        http,
+        build_completion_webhook_payload(
+            groq_request_id=result.id,
+            model=resolved_model,
+            route="/v1/chat/completions",
+            stream=False,
+            latency_ms=dur_ms,
+            latency_kind="groq_round_trip",
+            groq_ttfb_ms=None,
+            web_sources=web_sources,
+            fallback_used=used_fb,
+        ),
     )
     out = result.model_dump(mode="json", exclude_none=True)
     if web_sources is not None:

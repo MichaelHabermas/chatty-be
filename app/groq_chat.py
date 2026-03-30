@@ -146,8 +146,11 @@ async def sse_stream_with_observability(
     stream: AsyncStream[ChatCompletionChunk],
     *,
     web_sources: list[dict[str, str]] | None = None,
-) -> tuple[dict[str, str], AsyncIterator[str]]:
-    """Peek the first SSE chunk so we can send TTFB + request id in response headers."""
+) -> tuple[dict[str, str], AsyncIterator[str], float]:
+    """Peek the first SSE chunk so we can send TTFB + request id in response headers.
+
+    Returns ``(observability_headers, sse_body, groq_ttfb_ms)``.
+    """
     t0 = time.perf_counter()
     chunk_iter = stream.__aiter__()
     first = await chunk_iter.__anext__()
@@ -169,4 +172,4 @@ async def sse_stream_with_observability(
         finally:
             yield "data: [DONE]\n\n"
 
-    return obs, _body()
+    return obs, _body(), ttfb_ms
