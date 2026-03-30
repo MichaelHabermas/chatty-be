@@ -50,6 +50,19 @@ def extract_last_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def tavily_results_to_web_sources(results: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Stable client-facing shape for Tavily result dicts (title, url, snippet as content)."""
+    out: list[dict[str, str]] = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        title = str(r.get("title") or "")[:200]
+        url = str(r.get("url") or "")[:500]
+        snippet = str(r.get("content") or "")[:_MAX_SNIPPET_CHARS]
+        out.append({"title": title, "url": url, "content": snippet})
+    return out
+
+
 def _format_web_context(results: list[dict[str, Any]]) -> str:
     """Format Tavily result dicts into a single block of context text."""
     lines = [
@@ -154,16 +167,24 @@ async def augment_messages_with_web(
     messages: list[dict[str, Any]],
     *,
     web_search: bool,
-) -> list[dict[str, Any]]:
-    """If web_search is true, run Tavily on the last user text and inject results."""
+) -> tuple[list[dict[str, Any]], list[dict[str, str]] | None]:
+    """
+    If web_search is true, run Tavily on the last user text and inject results.
+
+    Returns ``(messages, web_sources)``. ``web_sources`` is ``None`` when Tavily was not
+    called (web off, or no extractable user text). Otherwise it is the list of sources
+    passed to the model (possibly empty).
+    """
     if not web_search:
-        return messages
+        return messages, None
     query = extract_last_user_text(messages)
     if not query:
-        return messages
+        return messages, None
     data = await tavily_search(http, query=query)
     results = data.get("results")
     if not isinstance(results, list):
         results = []
-    ctx = _format_web_context([r for r in results if isinstance(r, dict)])
-    return inject_web_context(messages, ctx)
+    dict_results = [r for r in results if isinstance(r, dict)]
+    web_sources = tavily_results_to_web_sources(dict_results)
+    ctx = _format_web_context(dict_results)
+    return inject_web_context(messages, ctx), web_sources

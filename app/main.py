@@ -172,6 +172,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     prompt: str
     response: str
+    web_sources: list[dict[str, str]] | None = None
 
 
 @app.get("/health")
@@ -194,7 +195,7 @@ async def chat(
         web_search=body.web_search,
         header=x_chatty_web_search,
     )
-    messages = await augment_messages_with_web(
+    messages, web_sources = await augment_messages_with_web(
         http,
         base_messages,
         web_search=use_web,
@@ -209,7 +210,10 @@ async def chat(
             stream, used_fb = await chat_completions_create_with_fallback(client, kwargs)
         except GROQ_HTTP_EXCEPTIONS as e:
             raise _groq_error_to_http(e) from e
-        obs, sse_body = await sse_stream_with_observability(stream)
+        obs, sse_body = await sse_stream_with_observability(
+            stream,
+            web_sources=web_sources,
+        )
         obs = with_fallback_header(obs, used_fb)
         return _streaming_sse_response(obs, sse_body)
 
@@ -233,7 +237,8 @@ async def chat(
         content=ChatResponse(
             prompt=body.prompt,
             response=_first_choice_content(completion),
-        ).model_dump(),
+            web_sources=web_sources,
+        ).model_dump(exclude_none=True),
         headers=obs,
     )
 
@@ -252,7 +257,7 @@ async def openai_chat_completions(
         web_search=body.web_search,
         header=x_chatty_web_search,
     )
-    augmented = await augment_messages_with_web(
+    augmented, web_sources = await augment_messages_with_web(
         http,
         list(body.messages),
         web_search=use_web,
@@ -265,7 +270,10 @@ async def openai_chat_completions(
         raise _groq_error_to_http(e) from e
 
     if body.stream:
-        obs, sse_body = await sse_stream_with_observability(result)
+        obs, sse_body = await sse_stream_with_observability(
+            result,
+            web_sources=web_sources,
+        )
         obs = with_fallback_header(obs, used_fb)
         return _streaming_sse_response(obs, sse_body)
 
@@ -274,8 +282,11 @@ async def openai_chat_completions(
         groq_observability_headers(duration_ms=dur_ms, request_id=result.id),
         used_fb,
     )
+    out = result.model_dump(mode="json", exclude_none=True)
+    if web_sources is not None:
+        out["web_sources"] = web_sources
     return JSONResponse(
-        content=result.model_dump(mode="json", exclude_none=True),
+        content=out,
         headers=obs,
     )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import AsyncIterator
@@ -17,6 +18,11 @@ DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 def _sse_chunk_line(chunk: ChatCompletionChunk) -> str:
     return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
+
+
+def _sse_web_sources_event(web_sources: list[dict[str, str]]) -> str:
+    payload = json.dumps({"web_sources": web_sources}, ensure_ascii=False)
+    return f"event: chatty.web_sources\ndata: {payload}\n\n"
 
 
 def default_model() -> str:
@@ -138,6 +144,8 @@ async def sse_chat_completion_chunks(
 
 async def sse_stream_with_observability(
     stream: AsyncStream[ChatCompletionChunk],
+    *,
+    web_sources: list[dict[str, str]] | None = None,
 ) -> tuple[dict[str, str], AsyncIterator[str]]:
     """Peek the first SSE chunk so we can send TTFB + request id in response headers."""
     t0 = time.perf_counter()
@@ -153,6 +161,8 @@ async def sse_stream_with_observability(
 
     async def _body() -> AsyncIterator[str]:
         try:
+            if web_sources is not None:
+                yield _sse_web_sources_event(web_sources)
             yield _sse_chunk_line(first)
             async for chunk in chunk_iter:
                 yield _sse_chunk_line(chunk)

@@ -10,10 +10,11 @@ Short notes on what we add and why, so the proxy stays intentional as it grows.
 - **`web_search_mode`**: **`off`** \| **`on`** \| **`auto`** — **omitted ⇒ `auto`** (server decides via heuristics + optional router). Explicit **`off`** / **`on`** overrides. Legacy **`web_search: true`** with **`web_search_mode`** omitted still forces Tavily on. **`auto`** uses **heuristics** on the last user message, with an optional **Groq JSON router** when **`GROQ_WEB_SEARCH_ROUTER_MODEL`** is set and the heuristic signal is ambiguous (unset router env ⇒ ambiguous **auto** resolves to no Tavily).
 - Header tri-state: **`X-Chatty-Web-Search`**: **`auto`**, **`on`**, **`off`**, or legacy **`true`** / **`1`** / **`yes`** (and **`false`** / **`0`** / **`no`** for off).
 - When enabled, **Tavily Search** runs first; results are injected as a **system** message, then Groq runs as usual (including streaming). Env: **`TAVILY_API_KEY`** (required when the resolved decision uses Tavily), optional **`TAVILY_MAX_RESULTS`**, **`TAVILY_SEARCH_DEPTH`**, optional **`GROQ_WEB_SEARCH_ROUTER_MODEL`**.
+- **`web_sources` metadata** when Tavily actually ran: non-streaming JSON includes **`web_sources`** — a list of `{ "title", "url", "content" }` (snippet, same caps as injected context). Streaming (**`/chat`** and **`/v1/chat/completions`**) emits one SSE event first: **`event: chatty.web_sources`** with **`data: {"web_sources":[...]}`** (JSON), then the usual OpenAI-style **`data:`** completion chunks and **`data: [DONE]`**. Omitted when Tavily was not called (e.g. web off or no extractable user text).
 
 ### Why
 
-Grounds the model on live web context without implementing a full tool-loop in Chatty; keeps the Groq path unchanged aside from augmented `messages`. **Auto** avoids requiring clients to guess when to set **`web_search`**, while keeping explicit control for tests and deterministic clients.
+Grounds the model on live web context without implementing a full tool-loop in Chatty; keeps the Groq path unchanged aside from augmented `messages`. **Auto** avoids requiring clients to guess when to set **`web_search`**, while keeping explicit control for tests and deterministic clients. Exposing **`web_sources`** lets UIs show citations and operators audit grounding without parsing assistant text.
 
 ### Docs
 
