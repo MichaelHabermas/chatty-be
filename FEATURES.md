@@ -2,6 +2,23 @@
 
 Short notes on what we add and why, so the proxy stays intentional as it grows.
 
+## Optional Tavily web search (prefetch grounding)
+
+### Added
+
+- **`web_search`** on **`POST /chat`** and **`POST /v1/chat/completions`** (default false), plus **`X-Chatty-Web-Search`** header (`true` / `1` / `yes`) for clients that cannot add custom JSON fields (e.g. OpenAI SDK without `extra_body`).
+- When enabled, **Tavily Search** runs first; results are injected as a **system** message, then Groq runs as usual (including streaming). Env: **`TAVILY_API_KEY`** (required when the feature is used), optional **`TAVILY_MAX_RESULTS`**, **`TAVILY_SEARCH_DEPTH`**.
+
+### Why
+
+Grounds the model on live web context without implementing a full tool-loop in Chatty; keeps the Groq path unchanged aside from augmented `messages`.
+
+### Docs
+
+If the last user turn has no extractable text, Tavily is skipped. Queries are sent to Tavily when the feature is on; see [`CLAUDE.md`](CLAUDE.md).
+
+---
+
 ## Agent-grade OpenAI compatibility (`/v1/chat/completions`)
 
 ### Added

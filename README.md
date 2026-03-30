@@ -1,17 +1,16 @@
 # Chatty
 
-A small [FastAPI](https://fastapi.tiangolo.com/) service that proxies [Groq](https://groq.com/) chat completions. It exposes a simple **`POST /chat`** API, **OpenAI-compatible** routes under **`/v1`**, and optional **SSE streaming**. Your Groq API key stays on the server.
+A small [FastAPI](https://fastapi.tiangolo.com/) service that proxies [Groq](https://groq.com/) chat completions. It exposes a simple `**POST /chat**` API, **OpenAI-compatible** routes under `**/v1`**, and optional **SSE streaming**. Your Groq API key stays on the server.
 
 ## Quick start
 
 1. Copy `.env.example` to `.env` and set `GROQ_API_KEY` from the [Groq console](https://console.groq.com/keys).
-
 2. Run locally:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r v
 uvicorn app.main:app --reload
 ```
 
@@ -26,15 +25,15 @@ docker compose up
 
 ## Configuration
 
-- **`GROQ_API_KEY`** (required) — from the [Groq console](https://console.groq.com/keys)
-- **`GROQ_MODEL`** (optional) — defaults to `llama-3.3-70b-versatile`
+- `**GROQ_API_KEY`** (required) — from the [Groq console](https://console.groq.com/keys)
+- `**GROQ_MODEL**` (optional) — defaults to `llama-3.3-70b-versatile`
 
 ## API overview
 
-- **`POST /chat`** — JSON body: `prompt`, optional `stream`. Returns `prompt` + `response`, or SSE when `stream` is true.
-- **`POST /v1/chat/completions`** — OpenAI-style chat completions (`messages`, optional `model`, `stream`, `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `user`). JSON or SSE.
-- **`GET /v1/models`** — Groq model list (OpenAI-compatible shape).
-- **`GET /health`** — Liveness check.
+- `**POST /chat**` — JSON body: `prompt`, optional `stream`. Returns `prompt` + `response`, or SSE when `stream` is true.
+- `**POST /v1/chat/completions**` — OpenAI-style chat completions (`messages`, optional `model`, `stream`, `temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `user`). JSON or SSE.
+- `**GET /v1/models**` — Groq model list (OpenAI-compatible shape).
+- `**GET /health**` — Liveness check.
 
 Groq errors are mapped to HTTP status codes (e.g. 401, 403, 429, 502) where applicable.
 
@@ -65,4 +64,4 @@ Use `stream=True` for SSE streaming.
 
 ## Dependencies
 
-See [`requirements.txt`](requirements.txt): FastAPI, Uvicorn, Groq.
+See `[requirements.txt](requirements.txt)`: FastAPI, Uvicorn, Groq.

@@ -1,12 +1,17 @@
 import os
 import secrets
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 import groq
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,6 +28,7 @@ from app.groq_chat import (
     sse_stream_with_observability,
     with_fallback_header,
 )
+from app.tavily_client import augment_messages_with_web, web_search_from_header
 
 GROQ_HTTP_EXCEPTIONS = (
     groq.AuthenticationError,
@@ -145,7 +151,9 @@ def _streaming_sse_response(obs: dict[str, str], sse_body):
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.groq = groq.AsyncGroq(api_key=_require_api_key())
+    fastapi_app.state.http = httpx.AsyncClient(timeout=60.0)
     yield
+    await fastapi_app.state.http.aclose()
     await fastapi_app.state.groq.close()
 
 
@@ -156,6 +164,7 @@ app.add_middleware(ChattyDocsAuthMiddleware)
 class ChatRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     stream: bool = False
+    web_search: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -169,11 +178,21 @@ async def health():
 
 
 @app.post("/chat", dependencies=[Depends(require_chatty_bearer)])
-async def chat(body: ChatRequest):
+async def chat(
+    body: ChatRequest,
+    x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
+):
     client: groq.AsyncGroq = app.state.groq
+    http: httpx.AsyncClient = app.state.http
+    use_web = body.web_search or web_search_from_header(x_chatty_web_search)
+    messages = await augment_messages_with_web(
+        http,
+        [{"role": "user", "content": body.prompt}],
+        web_search=use_web,
+    )
     if body.stream:
         v1_body = OpenAIChatCompletionRequest(
-            messages=[{"role": "user", "content": body.prompt}],
+            messages=messages,
             stream=True,
         )
         try:
@@ -191,7 +210,7 @@ async def chat(body: ChatRequest):
             client,
             {
                 "model": default_model(),
-                "messages": [{"role": "user", "content": body.prompt}],
+                "messages": messages,
             },
         )
     except GROQ_HTTP_EXCEPTIONS as e:
@@ -211,9 +230,19 @@ async def chat(body: ChatRequest):
 
 
 @app.post("/v1/chat/completions", dependencies=[Depends(require_chatty_bearer)])
-async def openai_chat_completions(body: OpenAIChatCompletionRequest):
+async def openai_chat_completions(
+    body: OpenAIChatCompletionRequest,
+    x_chatty_web_search: str | None = Header(None, alias="X-Chatty-Web-Search"),
+):
     client: groq.AsyncGroq = app.state.groq
-    kwargs = chat_completion_kwargs(body)
+    http: httpx.AsyncClient = app.state.http
+    use_web = body.web_search or web_search_from_header(x_chatty_web_search)
+    augmented = await augment_messages_with_web(
+        http,
+        list(body.messages),
+        web_search=use_web,
+    )
+    kwargs = chat_completion_kwargs(body.model_copy(update={"messages": augmented}))
     t0 = time.perf_counter()
     try:
         result, used_fb = await chat_completions_create_with_fallback(client, kwargs)

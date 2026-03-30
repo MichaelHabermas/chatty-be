@@ -68,6 +68,7 @@ class OpenAIChatCompletionRequest(BaseModel):
     model: str | None = None
     messages: list[dict[str, Any]] = Field(..., min_length=1)
     stream: bool = False
+    web_search: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
     max_completion_tokens: int | None = None
